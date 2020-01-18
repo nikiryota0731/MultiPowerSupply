@@ -1,5 +1,7 @@
+#include <avr/io.h>
 #include <LiquidCrystal_I2C.h>
 #include <Rotary.h>
+#include <EEPROM.h>
 #include "sw_controller.h"
 #include "motor.h"
 #include "MovingAverage.h"
@@ -16,8 +18,9 @@ const uint8_t LEVELPIN[] = {A1, A2, A0}; //12V, 6V, 3V
 const char DIRNAME[2][5] = {"CW", "CCW"};
 const char POWERNAME[2][5] = {"ON", "OFF"};
 
-const int volumeScale = 5;
+unsigned int frq = 10000; // 周波数
 
+const int volumeScale = 5;
 const double levelScale[] = {2.73318872, 1.8221258134, 1.004784689}; //12V, 6V, 3V
 
 LiquidCrystal_I2C lcd(0x27, 20, 4);
@@ -38,6 +41,8 @@ long oldTime = 0;
 
 int level12V, level6V, level3V;
 double level[3];
+bool levelLow = false;
+double levelLowBorder = EEPROM[0]/10;
 
 void setup() {
   Serial.begin(115200);
@@ -53,11 +58,11 @@ void setup() {
     pinMode(LEDPIN[i], OUTPUT);
   for (int i = 0; i < sizeof LEVELPIN / sizeof LEVELPIN[0]; i++)
     pinMode(LEVELPIN[i], INPUT);
-
+  EEPROM[0] = 110;
 }
 
 void loop() {
-  showLCD();
+  showLCD();  //LCD表示
   allUpdate();
   // show();
 }
@@ -95,7 +100,8 @@ void showLCD() {
       lcd.print(levelAverage[1].GetValue() - levelAverage[2].GetValue()); lcd.print(",");
       lcd.print(levelAverage[2].GetValue()); lcd.print(",");
       lcd.setCursor(0, 1);
-      lcd.print(levelAverage[0].GetValue());
+      lcd.print(levelAverage[0].GetValue()); 
+      lcd.print(" Low:");  lcd.print(levelLowBorder);
 
       switch (millis() - oldTime < 500) {
         case 0:
@@ -127,18 +133,30 @@ void allUpdate() {
 
   if (swR.getChange()) DIR = CW;
   if (swL.getChange()) DIR = CCW;
-
-  volume = enc.getCount() * volumeScale;
-  power = swMode.getData();
-  if (power) volume = 0;
-  motorDriver.drive(volume * 250 / 100, !DIR);
-  volume = enc.getCount() * volumeScale;
-  digitalWrite(LEDPIN[0], !power);
-  digitalWrite(LEDPIN[1], power);
-
+  
+  //電圧測定
   for (int i = 0; i < 3; i++) {
     level[i] = analogRead(LEVELPIN[i]) * 5.0 / 1023.0 * levelScale[i];
     levelAverage[i].Update(level[i]);
+  }
+  if(levelAverage[0].GetValue() < levelLowBorder)
+    power = false;
+  else
+    power = true;
+
+  //モーター出力
+  volume = enc.getCount() * volumeScale;
+  power &= swMode.getData();
+  if (power || levelLow) volume = 0;
+  motorDriver.drive(volume * 250 / 100, DIR);
+  volume = enc.getCount() * volumeScale;
+  
+  digitalWrite(LEDPIN[0], !power);
+  digitalWrite(LEDPIN[1], power);
+  
+  //電圧制限
+  if(lcdPage == 1){
+    // levelLowBorder = encLevel.getCount()/10;
   }
 }
 
